@@ -7,6 +7,7 @@ file_path = Path(__file__).parent
 logged_model_names = {}
 
 fix_viz_rot = Rotation.from_euler("x", 180, degrees=True)
+fix_model_rot = Rotation.identity()
 
 
 def log_drone_pose(
@@ -19,8 +20,9 @@ def log_drone_pose(
         model_name,
         rr.Transform3D(
             translation=fix_viz_rot.apply(position),
-            quaternion=(fix_viz_rot * Rotation.from_quat(quaternion)).as_quat(),
+            quaternion=(fix_model_rot*fix_viz_rot * Rotation.from_quat(quaternion)).as_quat(),
         ),
+        rr.TransformAxes3D(0.1),
         static=False,
     )
 

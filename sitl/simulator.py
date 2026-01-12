@@ -58,17 +58,19 @@ class L2F(Simulator):
         quat_xyzw = np.array([self.state.orientation[1], self.state.orientation[2],
                               self.state.orientation[3], self.state.orientation[0]])
 
-        # Transform from NED to ENU coordinates for visualization
+        # NED to ENU rotation matrix
         # NED: x=North, y=East, z=Down -> ENU: x=East, y=North, z=Up
-        position_ned = np.array(self.state.position)
-        position_enu = np.array([position_ned[1], position_ned[0], -position_ned[2]])
+        # This is equivalent to: [0 1 0; 1 0 0; 0 0 -1] matrix
+        ned_to_enu_matrix = np.array([[0, 1, 0],
+                                       [1, 0, 0],
+                                       [0, 0, -1]], dtype=np.float64)
 
-        velocity_ned = np.array(self.state.linear_velocity)
-        velocity_enu = np.array([velocity_ned[1], velocity_ned[0], -velocity_ned[2]])
+        # Apply rotation matrix to position and velocity
+        position_enu = ned_to_enu_matrix @ np.array(self.state.position)
+        velocity_enu = ned_to_enu_matrix @ np.array(self.state.linear_velocity)
 
-        # Rotate quaternion for NED to ENU
-        # This requires rotating the orientation by 90 degrees around Z axis
-        ned_to_enu_rot = R.from_euler('z', 90, degrees=True)
+        # Apply rotation to quaternion
+        ned_to_enu_rot = R.from_matrix(ned_to_enu_matrix)
         quat_ned = R.from_quat(quat_xyzw)
         quat_enu = ned_to_enu_rot * quat_ned
         quat_enu_xyzw = quat_enu.as_quat()
