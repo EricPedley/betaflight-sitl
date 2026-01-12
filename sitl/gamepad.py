@@ -48,7 +48,6 @@ class Gamepad:
                     if cfg.get("invert", False):
                         v = -v
                     rc.append(int((v + 1) * 500 + 1000))
-            print(rc)
             self.callback(rc)
 
 def main():
