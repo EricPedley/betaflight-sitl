@@ -57,8 +57,24 @@ class L2F(Simulator):
         # Convert quaternion from [w, x, y, z] to [x, y, z, w] for rerun
         quat_xyzw = np.array([self.state.orientation[1], self.state.orientation[2],
                               self.state.orientation[3], self.state.orientation[0]])
-        log_drone_pose(position=np.array(self.state.position), quaternion=quat_xyzw)
-        log_velocity(position=np.array(self.state.position), velocity=np.array(self.state.linear_velocity))
+
+        # Transform from NED to ENU coordinates for visualization
+        # NED: x=North, y=East, z=Down -> ENU: x=East, y=North, z=Up
+        position_ned = np.array(self.state.position)
+        position_enu = np.array([position_ned[1], position_ned[0], -position_ned[2]])
+
+        velocity_ned = np.array(self.state.linear_velocity)
+        velocity_enu = np.array([velocity_ned[1], velocity_ned[0], -velocity_ned[2]])
+
+        # Rotate quaternion for NED to ENU
+        # This requires rotating the orientation by 90 degrees around Z axis
+        ned_to_enu_rot = R.from_euler('z', 90, degrees=True)
+        quat_ned = R.from_quat(quat_xyzw)
+        quat_enu = ned_to_enu_rot * quat_ned
+        quat_enu_xyzw = quat_enu.as_quat()
+
+        log_drone_pose(position=position_enu, quaternion=quat_enu_xyzw)
+        log_velocity(position=position_enu, velocity=velocity_enu)
 
         # print(f"RPMs: {rpms} dt: {np.mean(self.simulation_dts):.4f} s, action: {action[0].tolist()}")
         return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325
