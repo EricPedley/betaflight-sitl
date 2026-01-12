@@ -3,6 +3,7 @@ from copy import copy
 import numpy as np
 import asyncio
 import json
+import rerun as rr
 
 
 betaflight_order = ["roll", "pitch", "throttle", "yaw", "arm"] # AETR
@@ -48,6 +49,10 @@ class Gamepad:
                     if cfg.get("invert", False):
                         v = -v
                     rc.append(int((v + 1) * 500 + 1000))
+
+            # Log RC channels to rerun as scalars
+            rr.log(f"rc_channels", rr.Scalars(rc))
+
             self.callback(rc)
 
 def main():
