@@ -20,7 +20,7 @@ class L2F(Simulator):
             UDP_IP = "127.0.0.1",
             SIMULATOR_MAX_RC_CHANNELS=16, # https://github.com/betaflight/betaflight/blob/a94083e77d6258bbf9b8b5388a82af9498c923e9/src/platform/SIMULATOR/target/SITL/target.h#L238
             START_SITL=True,
-            AUTO_ARM=True
+            AUTO_ARM=False
         ):
         super().__init__(PORT_PWM, PORT_STATE, PORT_RC, UDP_IP, SIMULATOR_MAX_RC_CHANNELS, START_SITL)
         self.device = l2f.Device()
@@ -85,8 +85,8 @@ class L2F(Simulator):
         # NED: x=North, y=East, z=Down -> ENU: x=East, y=North, z=Up
         # This is equivalent to: [0 1 0; 1 0 0; 0 0 -1] matrix
         ned_to_enu_matrix = np.array([[0, 1, 0],
-                                       [1, 0, 0],
-                                       [0, 0, -1]], dtype=np.float64)
+                                       [-1, 0, 0],
+                                       [0, 0, 1]], dtype=np.float64)
 
         # Apply rotation matrix to position and velocity
         position_enu = ned_to_enu_matrix @ np.array(self.state.position)
@@ -94,7 +94,7 @@ class L2F(Simulator):
 
         # Apply rotation to quaternion
         ned_to_enu_rot = R.from_matrix(ned_to_enu_matrix)
-        quat_ned = R.from_quat(quat_xyzw)
+        quat_ned = R.from_quat(quat_xyzw, scalar_first=False)
         quat_enu = ned_to_enu_rot * quat_ned
         quat_enu_xyzw = quat_enu.as_quat()
 
@@ -103,15 +103,15 @@ class L2F(Simulator):
         # rc channels to send should be x,y,yaw,z,aux, vx, vy, vz
         x,y,z = position_enu
         vx, vy, vz = velocity_enu
-        yaw = quat_enu.as_euler('zyx')[0]
+        yaw = quat_enu.as_euler('ZYX')[0]
         rescale = lambda v: int((v + 1) * 500 + 1000)
-        x_int = rescale(x/10)
-        y_int = rescale(y/10)
-        z_int = rescale(z/10)
-        yaw_int = rescale(yaw/np.pi)
-        vx_int = rescale(vx/10)
-        vy_int = rescale(vy/10)
-        vz_int = rescale(vz/10)
+        x_int = rescale(x)
+        y_int = rescale(y)
+        z_int = rescale(z)
+        yaw_int = rescale(yaw)
+        vx_int = rescale(vx)
+        vy_int = rescale(vy)
+        vz_int = rescale(vz)
         channels = [*self.joystick_values, x_int,y_int,z_int,yaw_int,vx_int,vy_int,vz_int, 0]
 
 

@@ -6,7 +6,6 @@ from scipy.spatial.transform import Rotation
 file_path = Path(__file__).parent
 logged_model_names = {}
 
-fix_viz_rot = Rotation.from_euler("x", 180, degrees=True)
 fix_model_rot = Rotation.identity()
 
 
@@ -19,8 +18,8 @@ def log_drone_pose(
     rr.log(
         model_name,
         rr.Transform3D(
-            translation=fix_viz_rot.apply(position),
-            quaternion=(fix_model_rot*fix_viz_rot * Rotation.from_quat(quaternion)).as_quat(),
+            translation=position,
+            quaternion=(fix_model_rot*Rotation.from_quat(quaternion)).as_quat(),
         ),
         rr.TransformAxes3D(0.1),
         static=False,
@@ -40,10 +39,10 @@ def log_gates(gate_info: list[tuple[np.ndarray, float]]):
         rr.log(
             instance_path,
             rr.Transform3D(
-                translation=fix_viz_rot.apply(gate_pos),
+                translation=gate_pos,
                 rotation=rr.Quaternion(
                     xyzw=(
-                        fix_viz_rot * Rotation.from_euler("XYZ", [0.0, 0.0, gate_yaw])
+                        Rotation.from_euler("XYZ", [0.0, 0.0, gate_yaw])
                     ).as_quat()
                 ),
             ),
@@ -62,8 +61,8 @@ def log_velocity(
     rr.log(
         model_name,
         rr.Arrows3D(
-            origins=[fix_viz_rot.apply(position)],
-            vectors=[fix_viz_rot.apply(velocity * 0.5)],  # Scale for visibility
+            origins=[position],
+            vectors=[velocity * 0.5],  # Scale for visibility
             colors=[0, 0, 255],
         ),
     )
