@@ -50,9 +50,6 @@ class Gamepad:
                         v = -v
                     rc.append(int((v + 1) * 500 + 1000))
 
-            # Log RC channels to rerun as scalars
-            rr.log(f"rc_channels", rr.Scalars(rc))
-
             self.callback(rc)
 
 def main():

@@ -12,8 +12,17 @@ from .logging_utils import log_drone_pose, log_velocity
 crazyflie_from_betaflight_motors = [0, 3, 1, 2]
 
 class L2F(Simulator):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+
+    def __init__(self,
+            PORT_PWM = 9002,    # Receive RPMs (from Betaflight)
+            PORT_STATE = 9003,  # Send state (to Betaflight)
+            PORT_RC = 9004,     # Send RC input (to Betaflight)
+            UDP_IP = "127.0.0.1",
+            SIMULATOR_MAX_RC_CHANNELS=16, # https://github.com/betaflight/betaflight/blob/a94083e77d6258bbf9b8b5388a82af9498c923e9/src/platform/SIMULATOR/target/SITL/target.h#L238
+            START_SITL=True,
+            AUTO_ARM=True
+        ):
+        super().__init__(PORT_PWM, PORT_STATE, PORT_RC, UDP_IP, SIMULATOR_MAX_RC_CHANNELS, START_SITL)
         self.device = l2f.Device()
         self.rng = l2f.Rng()
         self.env = l2f.Environment()
@@ -27,8 +36,22 @@ class L2F(Simulator):
         self.previous_time = None
         self.simulation_dts = []
 
-        # Initialize rerun
-        rr.init("L2F_Simulator", spawn=True)
+        # Initialize rerun with web viewer
+        rr.init("L2F_Simulator", spawn=False)
+        server_uri = rr.serve_grpc()
+
+        # Connect the web viewer to the gRPC server and open it in the browser
+        rr.serve_web_viewer(connect_to=server_uri)
+
+        print(f"Web viewer available at {server_uri}")
+        self.joystick_values = [0]*8
+        if AUTO_ARM:
+            self.joystick_values[4] = 2000
+            self.joystick_values[5] = 2000
+    
+    def set_joystick_channels(self, joystick_values):
+        self.joystick_values = joystick_values
+
     async def step(self, rpms):
         simulation_dt = time.time() - self.previous_time
         self.previous_time = time.time()
@@ -77,6 +100,25 @@ class L2F(Simulator):
 
         log_drone_pose(position=position_enu, quaternion=quat_enu_xyzw)
         log_velocity(position=position_enu, velocity=velocity_enu)
+        # rc channels to send should be x,y,yaw,z,aux, vx, vy, vz
+        x,y,z = position_enu
+        vx, vy, vz = velocity_enu
+        yaw = quat_enu.as_euler('zyx')[0]
+        rescale = lambda v: int((v + 1) * 500 + 1000)
+        x_int = rescale(x/10)
+        y_int = rescale(y/10)
+        z_int = rescale(z/10)
+        yaw_int = rescale(yaw/np.pi)
+        vx_int = rescale(vx/10)
+        vy_int = rescale(vy/10)
+        vz_int = rescale(vz/10)
+        channels = [*self.joystick_values, x_int,y_int,z_int,yaw_int,vx_int,vy_int,vz_int, 0]
+
+
+        # Log RC channels to rerun as scalars
+        rr.log(f"rc_channels", rr.Scalars(channels))
+
+        self.set_rc_channels(channels)
 
         # print(f"RPMs: {rpms} dt: {np.mean(self.simulation_dts):.4f} s, action: {action[0].tolist()}")
         return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325
