@@ -70,7 +70,7 @@ class L2F(Simulator):
         R_wb = r.as_matrix()
         accelerometer = R_wb.T @ (acceleration - np.array([0, 0, -9.81], dtype=np.float64))
         self.state.assign(self.next_state)
-        if self.state.position[2] <= -0.05:
+        if self.state.position[2] <= -0.001:
             self.state.position[2] = 0
             self.state.linear_velocity[:] = 0
             self.state.orientation = [1, 0, 0, 0]
@@ -116,7 +116,8 @@ class L2F(Simulator):
 
 
         # Log RC channels to rerun as scalars
-        rr.log(f"rc_channels", rr.Scalars(channels))
+        rr.log("rc_channels", rr.Scalars(channels))
+        rr.log("rpms", rr.Scalars(rpms))
 
         self.set_rc_channels(channels)
 
