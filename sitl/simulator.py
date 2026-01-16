@@ -7,6 +7,7 @@ import time
 from scipy.spatial.transform import Rotation as R
 import rerun as rr
 from .logging_utils import log_drone_pose, log_velocity
+from foundation_policy import Raptor
 
 
 crazyflie_from_betaflight_motors = [0, 3, 1, 2]
@@ -48,6 +49,9 @@ class L2F(Simulator):
         if AUTO_ARM:
             self.joystick_values[4] = 2000
             self.joystick_values[5] = 2000
+        
+        self.policy = Raptor()
+        self.policy.reset()
     
     def set_joystick_channels(self, joystick_values):
         self.joystick_values = joystick_values
@@ -63,6 +67,14 @@ class L2F(Simulator):
         parameters["integration"]["dt"] = simulation_dt
         l2f.parameters_from_json(self.device, self.env, json.dumps(parameters), self.params)
 
+
+        # observation = np.zeros((self.env.OBSERVATION_DIM), dtype=np.float32)
+        # observation=l2f.Observation() # 22 - dimensional: x, y, z, (flattened 3x3 rotation matrix), velocity xyz, body rates xyz, motor rpms
+
+        # l2f.observe(self.device, self.env, self.params, self.state, observation, self.rng)
+        # print(observation.observation[:22])
+        # print(self.state.position, self.state.linear_velocity, self.state.orientation, self.state.angular_velocity)
+        # action = self.policy.evaluate_step(observation.observation[:22])[0]
         action = np.array(rpms)[crazyflie_from_betaflight_motors] * 2 - 1
         dts = l2f.step(self.device, self.env, self.params, self.state, action, self.next_state, self.rng)
         acceleration = (self.next_state.linear_velocity - self.state.linear_velocity) / simulation_dt
@@ -70,8 +82,8 @@ class L2F(Simulator):
         R_wb = r.as_matrix()
         accelerometer = R_wb.T @ (acceleration - np.array([0, 0, -9.81], dtype=np.float64))
         self.state.assign(self.next_state)
-        if self.state.position[2] <= -0.001:
-            self.state.position[2] = 0
+        if self.state.position[2] <= -1.001:
+            self.state.position[2] = -1
             self.state.linear_velocity[:] = 0
             self.state.orientation = [1, 0, 0, 0]
             self.state.angular_velocity[:] = 0
@@ -105,14 +117,16 @@ class L2F(Simulator):
         vx, vy, vz = velocity_enu
         yaw = quat_enu.as_euler('ZYX')[0]
         rescale = lambda v: int((v + 1) * 500 + 1000)
-        x_int = rescale(x)
-        y_int = rescale(y)
-        z_int = rescale(z)
-        yaw_int = rescale(yaw)
-        vx_int = rescale(vx)
-        vy_int = rescale(vy)
-        vz_int = rescale(vz)
-        channels = [*self.joystick_values, x_int,y_int,z_int,yaw_int,vx_int,vy_int,vz_int, 0]
+        channels = [*self.joystick_values,*([0]*8)]
+        channels[7] = rescale(x)
+        channels[8] = rescale(y)
+        channels[9] = rescale(z)
+        channels[10] = rescale(vx)
+        channels[11] = rescale(vy)
+        channels[12] = rescale(vz)
+        channels[13] = rescale(quat_xyzw[0])
+        channels[14] = rescale(quat_xyzw[1])
+        channels[15] = rescale(quat_xyzw[2])
 
 
         # Log RC channels to rerun as scalars
