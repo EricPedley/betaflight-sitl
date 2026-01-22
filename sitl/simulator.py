@@ -124,9 +124,9 @@ class L2F(Simulator):
         channels[10] = rescale(vx)
         channels[11] = rescale(vy)
         channels[12] = rescale(vz)
-        channels[13] = rescale(quat_xyzw[0])
-        channels[14] = rescale(quat_xyzw[1])
-        channels[15] = rescale(quat_xyzw[2])
+        channels[13] = rescale(quat_enu.as_rotvec()[0])
+        channels[14] = rescale(quat_enu.as_rotvec()[1])
+        channels[15] = rescale(quat_enu.as_rotvec()[2])
 
 
         # Log RC channels to rerun as scalars
