@@ -93,29 +93,15 @@ class L2F(Simulator):
         quat_xyzw = np.array([self.state.orientation[1], self.state.orientation[2],
                               self.state.orientation[3], self.state.orientation[0]])
 
-        # NED to ENU rotation matrix
-        # NED: x=North, y=East, z=Down -> ENU: x=East, y=North, z=Up
-        # This is equivalent to: [0 1 0; 1 0 0; 0 0 -1] matrix
-        ned_to_enu_matrix = np.array([[0, 1, 0],
-                                       [-1, 0, 0],
-                                       [0, 0, 1]], dtype=np.float64)
-
         # Apply rotation matrix to position and velocity
-        position_enu = ned_to_enu_matrix @ np.array(self.state.position)
-        velocity_enu = ned_to_enu_matrix @ np.array(self.state.linear_velocity)
 
-        # Apply rotation to quaternion
-        ned_to_enu_rot = R.from_matrix(ned_to_enu_matrix)
-        quat_ned = R.from_quat(quat_xyzw, scalar_first=False)
-        quat_enu = ned_to_enu_rot * quat_ned
-        quat_enu_xyzw = quat_enu.as_quat()
+        orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
 
-        log_drone_pose(position=position_enu, quaternion=quat_enu_xyzw)
-        log_velocity(position=position_enu, velocity=velocity_enu)
+        log_drone_pose(position=self.state.position, quaternion=quat_xyzw)
+        log_velocity(position=self.state.position, velocity=self.state.linear_velocity)
         # rc channels to send should be x,y,yaw,z,aux, vx, vy, vz
-        x,y,z = position_enu
-        vx, vy, vz = velocity_enu
-        yaw = quat_enu.as_euler('ZYX')[0]
+        x,y,z = self.state.position
+        vx, vy, vz = self.state.linear_velocity
         rescale = lambda v: int((v + 1) * 500 + 1000)
         channels = [*self.joystick_values,*([0]*8)]
         channels[7] = rescale(x)
@@ -124,9 +110,9 @@ class L2F(Simulator):
         channels[10] = rescale(vx)
         channels[11] = rescale(vy)
         channels[12] = rescale(vz)
-        channels[13] = rescale(quat_enu.as_rotvec()[0])
-        channels[14] = rescale(quat_enu.as_rotvec()[1])
-        channels[15] = rescale(quat_enu.as_rotvec()[2])
+        channels[13] = rescale(orientation_rot.as_rotvec()[0])
+        channels[14] = rescale(orientation_rot.as_rotvec()[1])
+        channels[15] = rescale(orientation_rot.as_rotvec()[2])
 
 
         # Log RC channels to rerun as scalars
