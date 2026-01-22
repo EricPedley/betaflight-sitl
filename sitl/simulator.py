@@ -7,7 +7,8 @@ import time
 from scipy.spatial.transform import Rotation as R
 import rerun as rr
 from .logging_utils import log_drone_pose, log_velocity
-from foundation_policy import Raptor
+import torch
+import torch.nn as nn
 
 
 crazyflie_from_betaflight_motors = [0, 3, 1, 2]
@@ -49,10 +50,52 @@ class L2F(Simulator):
         if AUTO_ARM:
             self.joystick_values[4] = 2000
             self.joystick_values[5] = 2000
+
+        # Load skrl agent policy network
+        self.agent_checkpoint_path = "/home/miller/code/isaac_raptor/logs/skrl/quadrotor_ppo/2026-01-22_09-01-07_ppo_torch/checkpoints/best_agent.pt"
+        agent_state = torch.load(self.agent_checkpoint_path, map_location="cpu")
+        self.torch_device = torch.device("cpu")
+
+        # Build policy network from checkpoint
+        self.policy_net = self._build_policy_network(agent_state)
         
-        self.policy = Raptor()
-        self.policy.reset()
-    
+
+    def _build_policy_network(self, agent_state):
+        """Build and load the policy network from checkpoint state."""
+        class PolicyNetwork(nn.Module):
+            def __init__(self, input_size=12, hidden_size=32, output_size=4):
+                super().__init__()
+                self.net = nn.Sequential(
+                    nn.Linear(input_size, hidden_size),
+                    nn.ELU(),
+                    nn.Linear(hidden_size, hidden_size),
+                    nn.ELU()
+                )
+                self.mean = nn.Linear(hidden_size, output_size)
+                self.log_std = nn.Parameter(torch.zeros(output_size))
+
+            def forward(self, x):
+                features = self.net(x)
+                return self.mean(features)
+
+        policy_net = PolicyNetwork(input_size=12, hidden_size=32, output_size=4)
+        policy_net.to(self.torch_device)
+
+        # Load weights from checkpoint
+        policy_weights = agent_state["policy"]
+        state_dict = {}
+        state_dict["net.0.weight"] = policy_weights["net_container.0.weight"]
+        state_dict["net.0.bias"] = policy_weights["net_container.0.bias"]
+        state_dict["net.2.weight"] = policy_weights["net_container.2.weight"]
+        state_dict["net.2.bias"] = policy_weights["net_container.2.bias"]
+        state_dict["mean.weight"] = policy_weights["policy_layer.weight"]
+        state_dict["mean.bias"] = policy_weights["policy_layer.bias"]
+        state_dict["log_std"] = policy_weights["log_std_parameter"]
+
+        policy_net.load_state_dict(state_dict)
+        policy_net.eval()
+        return policy_net
+
     def set_joystick_channels(self, joystick_values):
         self.joystick_values = joystick_values
 
@@ -68,14 +111,41 @@ class L2F(Simulator):
         l2f.parameters_from_json(self.device, self.env, json.dumps(parameters), self.params)
 
 
-        # observation = np.zeros((self.env.OBSERVATION_DIM), dtype=np.float32)
-        # observation=l2f.Observation() # 22 - dimensional: x, y, z, (flattened 3x3 rotation matrix), velocity xyz, body rates xyz, motor rpms
+        # Convert quaternion from [w, x, y, z] to [x, y, z, w] for rotation matrix
+        quat_xyzw = np.array([self.state.orientation[1], self.state.orientation[2],
+                              self.state.orientation[3], self.state.orientation[0]])
+        r = R.from_quat(quat_xyzw, scalar_first=False)
+        R_wb = r.as_matrix()  # World to body rotation matrix
 
-        # l2f.observe(self.device, self.env, self.params, self.state, observation, self.rng)
-        # print(observation.observation[:22])
-        # print(self.state.position, self.state.linear_velocity, self.state.orientation, self.state.angular_velocity)
-        # action = self.policy.evaluate_step(observation.observation[:22])[0]
-        action = np.array(rpms)[crazyflie_from_betaflight_motors] * 2 - 1
+        # Body frame linear velocity
+        body_linear_vel = R_wb.T @ self.state.linear_velocity
+
+        # Body frame angular velocity
+        body_angular_vel = self.state.angular_velocity
+
+        # Body frame projected gravity (gravity vector [0, 0, -9.81] transformed to body frame)
+        world_gravity = np.array([0, 0, -1], dtype=np.float64)
+        body_gravity = R_wb.T @ world_gravity
+
+        # Body frame position setpoint (0, 0, 1) for now
+        body_position_setpoint = R_wb.T @ (np.array([0, 0, 1], dtype=np.float32) - self.state.position)
+
+        # Concatenate into 12D observation vector
+        obs_array = np.concatenate([
+            body_linear_vel,
+            body_angular_vel,
+            body_gravity,
+            body_position_setpoint
+        ]).astype(np.float32)
+
+        observation = torch.from_numpy(obs_array).unsqueeze(0).to(self.torch_device)
+
+        # Compute action using policy network
+        with torch.no_grad():
+            action_tensor = self.policy_net(observation)
+            action = action_tensor.squeeze(0).cpu().numpy()
+
+        action = np.clip(action, -1, 1)
         dts = l2f.step(self.device, self.env, self.params, self.state, action, self.next_state, self.rng)
         acceleration = (self.next_state.linear_velocity - self.state.linear_velocity) / simulation_dt
         r = R.from_quat([*self.state.orientation[1:], self.state.orientation[0]])
