@@ -6,20 +6,30 @@ from scipy.spatial.transform import Rotation
 file_path = Path(__file__).parent
 logged_model_names = {}
 
-fix_model_rot = Rotation.identity()
-
 
 def log_drone_pose(
     position: np.ndarray, quaternion: np.ndarray, model_name="drone/drone_model"
 ):
     if model_name not in logged_model_names:
         rr.log(model_name, rr.Asset3D(path=file_path / "Drone.obj"), static=True)
+        rr.log(
+            f"{model_name}/camera",
+            rr.Transform3D(translation=[0.03, 0, 0.04], quaternion=Rotation.from_euler('y', -20, degrees=True).as_quat()),
+            rr.Pinhole(
+                fov_y=1.2,
+                aspect_ratio=1.7777778,
+                camera_xyz=rr.ViewCoordinates.FLU,
+                image_plane_distance=0.1,
+                color=[255, 128, 0],
+                line_width=0.003,
+            ),
+        )
         logged_model_names[model_name] = True
     rr.log(
         model_name,
         rr.Transform3D(
             translation=position,
-            quaternion=(fix_model_rot*Rotation.from_quat(quaternion)).as_quat(),
+            quaternion=(Rotation.from_quat(quaternion)).as_quat(),
         ),
         rr.TransformAxes3D(0.1),
         static=False,
