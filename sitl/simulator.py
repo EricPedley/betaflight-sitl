@@ -145,7 +145,8 @@ class L2F(Simulator):
             action_tensor = self.policy_net(observation)
             action = action_tensor.squeeze(0).cpu().numpy()
 
-        action = np.clip(action, -1, 1)
+        # action = np.clip(action, -1, 1)
+        action = np.array(rpms)[crazyflie_from_betaflight_motors] * 2 - 1
         dts = l2f.step(self.device, self.env, self.params, self.state, action, self.next_state, self.rng)
         acceleration = (self.next_state.linear_velocity - self.state.linear_velocity) / simulation_dt
         r = R.from_quat([*self.state.orientation[1:], self.state.orientation[0]])
@@ -188,6 +189,7 @@ class L2F(Simulator):
         # Log RC channels to rerun as scalars
         rr.log("rc_channels", rr.Scalars(channels))
         rr.log("rpms", rr.Scalars(rpms))
+        rr.log("actions", rr.Scalars(action))
 
         self.set_rc_channels(channels)
 
