@@ -173,7 +173,7 @@ class L2F(Simulator):
         # rc channels to send should be x,y,yaw,z,aux, vx, vy, vz
         x,y,z = self.state.position
         vx, vy, vz = self.state.linear_velocity
-        rescale = lambda v: int((v + 1) * 500 + 1000)
+        rescale = lambda v: int((v + 1) * 500 + 1000) % 32768
         channels = [*self.joystick_values,*([0]*8)]
         channels[7] = rescale(x)
         channels[8] = rescale(y)
