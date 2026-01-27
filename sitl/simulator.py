@@ -1,5 +1,5 @@
 import l2f
-from betaflight import Simulator
+from .sim_base import Simulator
 import asyncio
 import numpy as np
 import json
@@ -99,7 +99,7 @@ class L2F(Simulator):
     def set_joystick_channels(self, joystick_values):
         self.joystick_values = joystick_values
 
-    async def step(self, rpms):
+    async def step(self, motor_input):
         simulation_dt = time.time() - self.previous_time
         self.previous_time = time.time()
         self.simulation_dts.append(simulation_dt)
@@ -146,7 +146,7 @@ class L2F(Simulator):
             action = action_tensor.squeeze(0).cpu().numpy()
 
         # action = np.clip(action, -1, 1)
-        action = np.array(rpms)[crazyflie_from_betaflight_motors] * 2 - 1
+        action = np.array(motor_input)[crazyflie_from_betaflight_motors] * 2 - 1
         dts = l2f.step(self.device, self.env, self.params, self.state, action, self.next_state, self.rng)
         acceleration = (self.next_state.linear_velocity - self.state.linear_velocity) / simulation_dt
         r = R.from_quat([*self.state.orientation[1:], self.state.orientation[0]])
@@ -188,13 +188,13 @@ class L2F(Simulator):
 
         # Log RC channels to rerun as scalars
         rr.log("rc_channels", rr.Scalars(channels))
-        rr.log("rpms", rr.Scalars(rpms))
+        rr.log("motor_command", rr.Scalars(motor_input))
         rr.log("actions", rr.Scalars(action))
 
         self.set_rc_channels(channels)
 
         # print(f"RPMs: {rpms} dt: {np.mean(self.simulation_dts):.4f} s, action: {action[0].tolist()}")
-        return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325
+        return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325, self.state.rpm*21702 # 21702 is the max crazyflie motor rpm according to the pufferlib drone env. state.rpm is scaled 0-1
 
     async def run(self):
         self.previous_time = time.time()
