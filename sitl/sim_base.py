@@ -64,7 +64,7 @@ class Simulator():
                 rpms = [0.0, 0.0, 0.0, 0.0]
 
             timestamp = time.time()
-            position, orientation, linear_velocity, angular_velocity, accelerometer, pressure, rpms = await self.step(rpms)
+            position, orientation, linear_velocity, angular_velocity, accelerometer, pressure, rpm_measurement = await self.step(rpms)
             rc_packet = struct.pack(f'<d{self.SIMULATOR_MAX_RC_CHANNELS}h', timestamp, *self.rc_channels)
             self.udp_rc_sock.sendto(rc_packet, (self.UDP_IP, self.PORT_RC))
             packet = struct.pack('<d3d3d4d3d3dd4d',
@@ -75,6 +75,6 @@ class Simulator():
                 *position,
                 *linear_velocity,
                 pressure,
-                *rpms
+                *rpm_measurement
             )
             self.udp_state_sock.sendto(packet, (self.UDP_IP, self.PORT_STATE))

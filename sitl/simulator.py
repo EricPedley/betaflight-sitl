@@ -193,8 +193,12 @@ class L2F(Simulator):
 
         self.set_rc_channels(channels)
 
-        # print(f"RPMs: {rpms} dt: {np.mean(self.simulation_dts):.4f} s, action: {action[0].tolist()}")
-        return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325, self.state.rpm*21702 # 21702 is the max crazyflie motor rpm according to the pufferlib drone env. state.rpm is scaled 0-1
+        # TODO: un-hardcode the max rpm later
+        MAX_CRAZYFLIE_RPM = 21702
+        rpms_corrected = np.zeros(4)
+        rpm_mapping = [1,0,2,3] # really not sure why this is different from the mapping for the actions. It's not even the inverse. This seems to work though.
+        rpms_corrected = self.state.rpm[rpm_mapping]*MAX_CRAZYFLIE_RPM
+        return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325, rpms_corrected
 
     async def run(self):
         self.previous_time = time.time()
