@@ -11,7 +11,8 @@ import torch
 import torch.nn as nn
 
 
-crazyflie_from_betaflight_motors = [0, 3, 1, 2]
+# crazyflie_from_betaflight_motors = [0, 3, 1, 2]
+crazyflie_from_betaflight_motors = [3,0,1,2] # fuck me why is this not the identity??
 
 class L2F(Simulator):
 
@@ -22,7 +23,8 @@ class L2F(Simulator):
             UDP_IP = "127.0.0.1",
             SIMULATOR_MAX_RC_CHANNELS=16, # https://github.com/betaflight/betaflight/blob/a94083e77d6258bbf9b8b5388a82af9498c923e9/src/platform/SIMULATOR/target/SITL/target.h#L238
             START_SITL=True,
-            AUTO_ARM=False
+            AUTO_ARM=False,
+            parameters_file=None
         ):
         super().__init__(PORT_PWM, PORT_STATE, PORT_RC, UDP_IP, SIMULATOR_MAX_RC_CHANNELS, START_SITL)
         self.device = l2f.Device()
@@ -34,6 +36,14 @@ class L2F(Simulator):
         l2f.initialize_rng(self.device, self.rng, 0)
         l2f.initialize_environment(self.device, self.env)
         l2f.sample_initial_parameters(self.device, self.env, self.params, self.rng)
+
+        # Store max_rpm for step() to use (default crazyflie value, may be overridden by parameters file)
+        self.max_rpm = 21702
+
+        # Load custom parameters if provided
+        if parameters_file is not None:
+            self._load_parameters_file(parameters_file)
+
         l2f.initial_state(self.device, self.env, self.params, self.state)
         self.previous_time = None
         self.simulation_dts = []
@@ -58,7 +68,73 @@ class L2F(Simulator):
 
         # Build policy network from checkpoint
         self.policy_net = self._build_policy_network(agent_state)
-        
+
+    def _load_parameters_file(self, parameters_file):
+        """Load quadrotor parameters from a JSON file and apply to simulator.
+
+        Supports the simplified format (meteor75_parameters.json style) with fields:
+        - mass, rotor_positions, rotor_thrust_directions, rotor_torque_directions
+        - thrust_coefficients, rotor_torque_constants, inertia_diag
+        - delay_rising_constants, delay_falling_constants, max_measured_rpm
+        """
+        with open(parameters_file, 'r') as f:
+            input_params = json.load(f)
+
+        # Get current parameters as base
+        params_string = l2f.parameters_to_json(self.device, self.env, self.params)
+        l2f_params = json.loads(params_string)
+
+        # Map from simplified format to l2f format
+        dynamics = l2f_params["dynamics"]
+
+        if "max_measured_rpm" in input_params:
+            self.max_rpm = input_params["max_measured_rpm"]
+
+        if "mass" in input_params:
+            dynamics["mass"] = input_params["mass"]
+
+        if "rotor_positions" in input_params:
+            dynamics["rotor_positions"] = input_params["rotor_positions"]
+
+        if "rotor_thrust_directions" in input_params:
+            dynamics["rotor_thrust_directions"] = input_params["rotor_thrust_directions"]
+
+        if "rotor_torque_directions" in input_params:
+            dynamics["rotor_torque_directions"] = input_params["rotor_torque_directions"]
+
+        if "thrust_coefficients" in input_params:
+            dynamics["rotor_thrust_coefficients"] = input_params["thrust_coefficients"]
+            for i in range(4):
+                dynamics["rotor_thrust_coefficients"][i][1] *= self.max_rpm
+                dynamics["rotor_thrust_coefficients"][i][2] *= self.max_rpm**2
+
+        if "rotor_torque_constants" in input_params:
+            dynamics["rotor_torque_constants"] = input_params["rotor_torque_constants"]
+
+        if "delay_rising_constants" in input_params:
+            dynamics["rotor_time_constants_rising"] = input_params["delay_rising_constants"]
+
+        if "delay_falling_constants" in input_params:
+            dynamics["rotor_time_constants_falling"] = input_params["delay_falling_constants"]
+
+        if "inertia_diag" in input_params:
+            # Convert diagonal inertia to full 3x3 matrix J and compute J_inv
+            Jxx, Jyy, Jzz = input_params["inertia_diag"]
+            dynamics["J"] = [
+                [Jxx, 0.0, 0.0],
+                [0.0, Jyy, 0.0],
+                [0.0, 0.0, Jzz]
+            ]
+            dynamics["J_inv"] = [
+                [1.0/Jxx, 0.0, 0.0],
+                [0.0, 1.0/Jyy, 0.0],
+                [0.0, 0.0, 1.0/Jzz]
+            ]
+
+
+        # Apply the updated parameters
+        l2f.parameters_from_json(self.device, self.env, json.dumps(l2f_params), self.params)
+        print(f"Loaded parameters from {parameters_file}")
 
     def _build_policy_network(self, agent_state):
         """Build and load the policy network from checkpoint state."""
@@ -193,11 +269,10 @@ class L2F(Simulator):
 
         self.set_rc_channels(channels)
 
-        # TODO: un-hardcode the max rpm later
-        MAX_CRAZYFLIE_RPM = 21702
         rpms_corrected = np.zeros(4)
-        rpm_mapping = [1,0,2,3] # really not sure why this is different from the mapping for the actions. It's not even the inverse. This seems to work though.
-        rpms_corrected = self.state.rpm[rpm_mapping]*MAX_CRAZYFLIE_RPM
+        # rpm_mapping = [1,0,2,3] # really not sure why this is different from the mapping for the actions. It's not even the inverse. This seems to work though.
+        rpm_mapping = [0,1,2,3]
+        rpms_corrected = self.state.rpm[rpm_mapping]*self.max_rpm
         return self.state.position, self.state.orientation, self.state.linear_velocity, self.state.angular_velocity, accelerometer, 101325, rpms_corrected
 
     async def run(self):
