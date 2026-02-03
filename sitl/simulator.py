@@ -12,8 +12,6 @@ import torch.nn as nn
 from .drone_env import QuadcopterEnv, rotate_vector_by_quaternion_conj
 
 
-# crazyflie_from_betaflight_motors = [0, 3, 1, 2]
-crazyflie_from_betaflight_motors = [3,0,1,2] # fuck me why is this not the identity??
 
 class L2F(Simulator):
 
@@ -23,29 +21,19 @@ class L2F(Simulator):
             PORT_RC = 9004,     # Send RC input (to Betaflight)
             UDP_IP = "127.0.0.1",
             SIMULATOR_MAX_RC_CHANNELS=16, # https://github.com/betaflight/betaflight/blob/a94083e77d6258bbf9b8b5388a82af9498c923e9/src/platform/SIMULATOR/target/SITL/target.h#L238
-            START_SITL=True,
             AUTO_ARM=False,
             parameters_file=None
         ):
-        super().__init__(PORT_PWM, PORT_STATE, PORT_RC, UDP_IP, SIMULATOR_MAX_RC_CHANNELS, START_SITL)
+        super().__init__(PORT_PWM, PORT_STATE, PORT_RC, UDP_IP, SIMULATOR_MAX_RC_CHANNELS)
 
         # Find parameters file
         if parameters_file:
             config_path = parameters_file
         else:
-            # Try to find parameters file: first in sitl dir, then parent repo
-            sitl_dir = os.path.dirname(os.path.abspath(__file__))
-            local_params = os.path.join(sitl_dir, "my_quad_parameters.json")
-            parent_repo_params = os.path.join(sitl_dir, "..", "..", "meteor75_parameters.json")
-            if os.path.exists(local_params):
-                config_path = local_params
-            elif os.path.exists(parent_repo_params):
-                config_path = os.path.abspath(parent_repo_params)
-            else:
-                raise FileNotFoundError(
-                    f"No parameters file found. Tried:\n  {local_params}\n  {parent_repo_params}\n"
-                    "Please provide parameters_file argument."
-                )
+            raise FileNotFoundError(
+                f"No parameters file provided"
+                "Please provide parameters_file argument."
+            )
 
         # Initialize physics engine from drone_env
         self.env = QuadcopterEnv(
@@ -62,7 +50,6 @@ class L2F(Simulator):
         self.max_rpm = self.env._max_rpm
 
         self.previous_time = None
-        self.simulation_dts = []
 
         # Initialize rerun with web viewer
         rr.init("Quadcopter_Simulator", spawn=False)
@@ -77,61 +64,12 @@ class L2F(Simulator):
             self.joystick_values[4] = 2000
             self.joystick_values[5] = 2000
 
-        # Load skrl agent policy network
-        self.agent_checkpoint_path = "/home/miller/code/isaac_raptor/logs/skrl/quadrotor_ppo/2026-01-22_09-01-07_ppo_torch/checkpoints/best_agent.pt"
-        if os.path.exists(self.agent_checkpoint_path):
-            agent_state = torch.load(self.agent_checkpoint_path, map_location="cpu")
-            self.torch_device = torch.device("cpu")
-            # Build policy network from checkpoint
-            self.policy_net = self._build_policy_network(agent_state)
-        else:
-            self.policy_net = None
-            self.torch_device = torch.device("cpu")
-
-    def _build_policy_network(self, agent_state):
-        """Build and load the policy network from checkpoint state."""
-        class PolicyNetwork(nn.Module):
-            def __init__(self, input_size=12, hidden_size=32, output_size=4):
-                super().__init__()
-                self.net = nn.Sequential(
-                    nn.Linear(input_size, hidden_size),
-                    nn.ELU(),
-                    nn.Linear(hidden_size, hidden_size),
-                    nn.ELU()
-                )
-                self.mean = nn.Linear(hidden_size, output_size)
-                self.log_std = nn.Parameter(torch.zeros(output_size))
-
-            def forward(self, x):
-                features = self.net(x)
-                return self.mean(features)
-
-        policy_net = PolicyNetwork(input_size=12, hidden_size=32, output_size=4)
-        policy_net.to(self.torch_device)
-
-        # Load weights from checkpoint
-        policy_weights = agent_state["policy"]
-        state_dict = {}
-        state_dict["net.0.weight"] = policy_weights["net_container.0.weight"]
-        state_dict["net.0.bias"] = policy_weights["net_container.0.bias"]
-        state_dict["net.2.weight"] = policy_weights["net_container.2.weight"]
-        state_dict["net.2.bias"] = policy_weights["net_container.2.bias"]
-        state_dict["mean.weight"] = policy_weights["policy_layer.weight"]
-        state_dict["mean.bias"] = policy_weights["policy_layer.bias"]
-        state_dict["log_std"] = policy_weights["log_std_parameter"]
-
-        policy_net.load_state_dict(state_dict)
-        policy_net.eval()
-        return policy_net
-
     def set_joystick_channels(self, joystick_values):
         self.joystick_values = joystick_values
 
     async def step(self, motor_input):
         simulation_dt = time.time() - self.previous_time
         self.previous_time = time.time()
-        self.simulation_dts.append(simulation_dt)
-        self.simulation_dts = self.simulation_dts[-100:]
 
         # Update env dt
         self.env.dt = simulation_dt
@@ -166,18 +104,8 @@ class L2F(Simulator):
             body_position_setpoint
         ]).astype(np.float32)
 
-        observation = torch.from_numpy(obs_array).unsqueeze(0).to(self.torch_device)
-
-        # Compute action using policy network (if available)
-        if self.policy_net is not None:
-            with torch.no_grad():
-                action_tensor = self.policy_net(observation)
-                action = action_tensor.squeeze(0).cpu().numpy()
-        else:
-            action = np.zeros(4)
-
         # Override with motor input from Betaflight (convert [0,1] to [-1,1] with motor remapping)
-        action = np.array(motor_input)[crazyflie_from_betaflight_motors] * 2 - 1
+        action = np.array(motor_input) * 2 - 1
         actions_tensor = torch.tensor(action, dtype=torch.float32, device=self.env.device).unsqueeze(0)
 
         # Step physics (bypass decimation, step once with current dt)

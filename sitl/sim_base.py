@@ -21,13 +21,7 @@ class Simulator():
             PORT_RC = 9004,     # Send RC input (to Betaflight)
             UDP_IP = "127.0.0.1",
             SIMULATOR_MAX_RC_CHANNELS=16, # https://github.com/betaflight/betaflight/blob/a94083e77d6258bbf9b8b5388a82af9498c923e9/src/platform/SIMULATOR/target/SITL/target.h#L238
-            START_SITL=True
         ):
-        if START_SITL:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            SITL_EXECUTABLE = "betaflight_4.6.0_SITL"
-            subprocess.Popen([os.path.join(current_dir, "firmware", "obj", SITL_EXECUTABLE)], cwd=os.path.dirname(os.path.abspath(__file__)))
-            time.sleep(2)
         self.PORT_PWM = PORT_PWM
         self.PORT_STATE = PORT_STATE
         self.PORT_RC = PORT_RC
