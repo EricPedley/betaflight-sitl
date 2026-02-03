@@ -152,6 +152,7 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         render_mode: Optional[str] = None,
         use_compile: bool = False,
         compile_mode: str = "reduce-overhead",
+        auto_reset: bool = True,
         **kwargs
     ):
         self.single_action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32) # should be (-1, 1) but in isaaclab it's inf so we're sticking with that
@@ -174,6 +175,7 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self.orientation_reward_scale = orientation_reward_scale
         self.dynamics_randomization_delta = dynamics_randomization_delta
         self.render_mode = render_mode
+        self.auto_reset = auto_reset
 
         # Initialize rerun logging if rendering in human mode
         if self.render_mode == "human" and HAS_RERUN:
@@ -487,12 +489,13 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self.episode_length_buf += 1
 
         # Handle resets
-        reset_envs = torch.where(self.terminals | self.truncations)[0]
-        if len(reset_envs) > 0:
-            # Store completed episode stats before resetting
-            self._completed_episode_lengths[reset_envs] = self.episode_length_buf[reset_envs].float()
-            self._completed_episode_rewards[reset_envs] = self._cumulative_rewards[reset_envs]
-            self._reset_idx(reset_envs)
+        if self.auto_reset:
+            reset_envs = torch.where(self.terminals | self.truncations)[0]
+            if len(reset_envs) > 0:
+                # Store completed episode stats before resetting
+                self._completed_episode_lengths[reset_envs] = self.episode_length_buf[reset_envs].float()
+                self._completed_episode_rewards[reset_envs] = self._cumulative_rewards[reset_envs]
+                self._reset_idx(reset_envs)
 
         # Render if human mode is enabled
         if self.render_mode == "human" and HAS_RERUN:

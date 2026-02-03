@@ -38,8 +38,8 @@ class Simulator():
         self.udp_pwm_sock.setblocking(False)
         self.udp_state_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_rc_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.rc_channels = [1500] * self.SIMULATOR_MAX_RC_CHANNELS 
-    
+        self.rc_channels = [1500] * self.SIMULATOR_MAX_RC_CHANNELS
+
     def set_rc_channels(self, channels):
         '''
             Array. Value range: 1000-2000
@@ -52,7 +52,7 @@ class Simulator():
         # Placeholder for the step function
         # returns position, orientation, linear_velocity, angular_velocity, accelerometer, pressure # [m, (w, x, y, z) quaternion, m/s, rad/s, m/s^2, ?] all in FLU
         return np.zeros(3), np.array([1, 0, 0, 0]), np.zeros(3), np.zeros(3), np.zeros(3), 101325
-    
+
     async def run(self):
         loop = asyncio.get_event_loop()
         while True:
