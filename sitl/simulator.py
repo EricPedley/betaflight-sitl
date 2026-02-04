@@ -39,6 +39,8 @@ class L2F(Simulator):
             dt=0.001,  # Will be updated dynamically
             render_mode="human",  # drone_env handles rendering
             device="cpu",
+            dynamics_randomization_delta=0.0,
+            observation_delay_steps=1,
             auto_reset=False  # Simulator handles its own reset logic
         )
         self.env.reset()

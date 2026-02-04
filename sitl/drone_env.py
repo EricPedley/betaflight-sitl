@@ -148,6 +148,7 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         distance_to_goal_reward_scale: float = 15.0,
         orientation_reward_scale: float = 10.0,
         dynamics_randomization_delta: float = 0.0,
+        observation_delay_steps: int = 0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         render_mode: Optional[str] = None,
         use_compile: bool = False,
@@ -260,6 +261,21 @@ class QuadcopterEnv(pufferlib.PufferEnv):
             )
         else:
             self._compiled_physics_step = self._physics_step_impl
+
+        # Observation delay buffer (ring buffer)
+        self.observation_delay_steps = observation_delay_steps
+        if self.observation_delay_steps > 0:
+            obs_dim = self.single_observation_space.shape[0]  # 19
+            self._obs_buffer = torch.zeros(
+                self.num_envs,
+                self.observation_delay_steps + 1,  # +1 to store current + N delayed
+                obs_dim,
+                device=self.device
+            )
+            self._obs_buffer_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        else:
+            self._obs_buffer = None
+            self._obs_buffer_idx = None
 
     def step(self, actions: torch.Tensor) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """Execute one step in the environment."""
@@ -467,6 +483,10 @@ class QuadcopterEnv(pufferlib.PufferEnv):
             self.orientation_reward_scale,
         )
 
+        # Apply observation delay if configured
+        if self._obs_buffer is not None:
+            self.observations = self._buffer_observation(self.observations)
+
         # Build rewards dict for logging (outside compiled region)
         rewards_dict = {
             "lin_vel": reward_components[:, 0],
@@ -557,6 +577,26 @@ class QuadcopterEnv(pufferlib.PufferEnv):
 
         return obs
 
+    def _buffer_observation(self, obs: torch.Tensor) -> torch.Tensor:
+        """Store current observation in buffer and return delayed observation."""
+        if self._obs_buffer is None:
+            return obs
+
+        # Store current observation at current index
+        buffer_size = self.observation_delay_steps + 1
+        current_idx = self._obs_buffer_idx
+        env_indices = torch.arange(obs.shape[0], device=self.device)
+        self._obs_buffer[env_indices, current_idx] = obs
+
+        # Get delayed observation (delay_steps behind current)
+        delayed_idx = (current_idx - self.observation_delay_steps) % buffer_size
+        delayed_obs = self._obs_buffer[env_indices, delayed_idx]
+
+        # Advance buffer index
+        self._obs_buffer_idx = (current_idx + 1) % buffer_size
+
+        return delayed_obs
+
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[torch.Tensor, Dict]:
         """Reset all environments."""
         if seed is not None:
@@ -620,6 +660,15 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self._velocity[env_ids] = 0.0
         self._quaternion[env_ids] = torch.tensor([1.0, 0.0, 0.0, 0.0], device=self.device)
         self._angular_velocity[env_ids] = 0.0
+
+        # Reset observation buffer for these environments
+        if self._obs_buffer is not None:
+            # Get initial observation for reset environments
+            initial_obs = self._get_observations()[env_ids]
+            # Fill entire buffer with initial observation (so delayed obs are valid)
+            for i in range(self.observation_delay_steps + 1):
+                self._obs_buffer[env_ids, i] = initial_obs
+            self._obs_buffer_idx[env_ids] = 0
 
     def _render(self):
         """Render the environment using rerun logging."""
