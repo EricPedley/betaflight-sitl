@@ -1,17 +1,14 @@
 import os
 from .sim_base import Simulator
-import asyncio
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
 import rerun as rr
-from .logging_utils import log_drone_pose, log_velocity
 import torch
-import torch.nn as nn
 
 from .drone_env import QuadcopterEnv, rotate_vector_by_quaternion_conj
 
-
+motor_action_remapping = [3,0,1,2] # this is necessary because in betaflight's sitl.c the motor commands are reordered before being sent out
 
 class L2F(Simulator):
 
@@ -40,7 +37,7 @@ class L2F(Simulator):
             num_envs=1,
             config_path=config_path,
             dt=0.001,  # Will be updated dynamically
-            render_mode=None,  # We handle rendering ourselves
+            render_mode="human",  # drone_env handles rendering
             device="cpu",
             auto_reset=False  # Simulator handles its own reset logic
         )
@@ -52,13 +49,13 @@ class L2F(Simulator):
         self.previous_time = None
 
         # Initialize rerun with web viewer
-        rr.init("Quadcopter_Simulator", spawn=False)
-        server_uri = rr.serve_grpc()
+        # rr.init("Quadcopter_Simulator", spawn=False)
+        # server_uri = rr.serve_grpc()
 
         # Connect the web viewer to the gRPC server and open it in the browser
-        rr.serve_web_viewer(connect_to=server_uri)
+        # rr.serve_web_viewer(connect_to=server_uri)
 
-        print(f"Web viewer available at {server_uri}")
+        # print(f"Web viewer available at {server_uri}")
         self.joystick_values = [0]*8
         if AUTO_ARM:
             self.joystick_values[4] = 2000
@@ -77,35 +74,8 @@ class L2F(Simulator):
         # Store previous velocity for accelerometer calculation
         prev_velocity = self.env._velocity[0].clone()
 
-        # Convert quaternion from [w, x, y, z] to [x, y, z, w] for rotation matrix
-        quat_wxyz = self.env._quaternion[0].cpu().numpy()
-        quat_xyzw = np.array([quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0]])
-        r = R.from_quat(quat_xyzw, scalar_first=False)
-        R_wb = r.as_matrix()  # World to body rotation matrix
-
-        # Body frame linear velocity
-        body_linear_vel = R_wb.T @ self.env._velocity[0].cpu().numpy()
-
-        # Body frame angular velocity
-        body_angular_vel = self.env._angular_velocity[0].cpu().numpy()
-
-        # Body frame projected gravity (gravity vector [0, 0, -1] transformed to body frame)
-        world_gravity = np.array([0, 0, -1], dtype=np.float64)
-        body_gravity = R_wb.T @ world_gravity
-
-        # Body frame position setpoint (0, 0, 1) for now
-        body_position_setpoint = R_wb.T @ (np.array([0, 0, 1], dtype=np.float32) - self.env._position[0].cpu().numpy())
-
-        # Concatenate into 12D observation vector
-        obs_array = np.concatenate([
-            body_linear_vel,
-            body_angular_vel,
-            body_gravity,
-            body_position_setpoint
-        ]).astype(np.float32)
-
-        # Override with motor input from Betaflight (convert [0,1] to [-1,1] with motor remapping)
-        action = np.array(motor_input) * 2 - 1
+        # Convert motor input from Betaflight [0,1] to actions [-1,1]
+        action = np.array(motor_input)[motor_action_remapping] * 2 - 1
         actions_tensor = torch.tensor(action, dtype=torch.float32, device=self.env.device).unsqueeze(0)
 
         # Step physics (bypass decimation, step once with current dt)
@@ -143,17 +113,15 @@ class L2F(Simulator):
             angular_velocity = np.zeros(3)
             quaternion = np.array([1.0, 0.0, 0.0, 0.0])
 
-        # Log to rerun
-        # Convert quaternion from [w, x, y, z] to [x, y, z, w] for rerun
-        quat_xyzw = np.array([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
-        orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
-
-        log_drone_pose(position=position, quaternion=quat_xyzw)
-        log_velocity(position=position, velocity=linear_velocity)
-
-        # rc channels to send should be x,y,yaw,z,aux, vx, vy, vz
+        # Build RC channels to send to Betaflight
+        # Channels 0-6: joystick input
+        # Channels 7-15: state feedback (position, velocity, orientation)
         x, y, z = position
         vx, vy, vz = linear_velocity
+        quat_xyzw = np.array([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
+        orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
+        rotvec = orientation_rot.as_rotvec()
+
         rescale = lambda v: int((v + 1) * 500 + 1000) % 32768
         channels = [*self.joystick_values, *([0]*8)]
         channels[7] = rescale(x)
@@ -162,14 +130,29 @@ class L2F(Simulator):
         channels[10] = rescale(vx)
         channels[11] = rescale(vy)
         channels[12] = rescale(vz)
-        channels[13] = rescale(orientation_rot.as_rotvec()[0])
-        channels[14] = rescale(orientation_rot.as_rotvec()[1])
-        channels[15] = rescale(orientation_rot.as_rotvec()[2])
+        channels[13] = rescale(rotvec[0])
+        channels[14] = rescale(rotvec[1])
+        channels[15] = rescale(rotvec[2])
 
-        # Log RC channels to rerun as scalars
-        rr.log("rc_channels", rr.Scalars(channels))
-        rr.log("motor_command", rr.Scalars(motor_input))
-        rr.log("actions", rr.Scalars(action))
+        # Log RC channels with semantic names
+        rr.log("rc/joystick/roll", rr.Scalars(float(self.joystick_values[0])))
+        rr.log("rc/joystick/pitch", rr.Scalars(float(self.joystick_values[1])))
+        rr.log("rc/joystick/throttle", rr.Scalars(float(self.joystick_values[2])))
+        rr.log("rc/joystick/yaw", rr.Scalars(float(self.joystick_values[3])))
+        rr.log("rc/joystick/arm", rr.Scalars(float(self.joystick_values[4])))
+        rr.log("rc/joystick/mode", rr.Scalars(float(self.joystick_values[5])))
+        rr.log("rc/joystick/aux3", rr.Scalars(float(self.joystick_values[6])))
+        rr.log("rc/joystick/aux4", rr.Scalars(float(self.joystick_values[7])))
+
+        rr.log("rc/state/position_x", rr.Scalars(float(channels[7])))
+        rr.log("rc/state/position_y", rr.Scalars(float(channels[8])))
+        rr.log("rc/state/position_z", rr.Scalars(float(channels[9])))
+        rr.log("rc/state/velocity_x", rr.Scalars(float(channels[10])))
+        rr.log("rc/state/velocity_y", rr.Scalars(float(channels[11])))
+        rr.log("rc/state/velocity_z", rr.Scalars(float(channels[12])))
+        rr.log("rc/state/rotation_x", rr.Scalars(float(channels[13])))
+        rr.log("rc/state/rotation_y", rr.Scalars(float(channels[14])))
+        rr.log("rc/state/rotation_z", rr.Scalars(float(channels[15])))
 
         self.set_rc_channels(channels)
 

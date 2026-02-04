@@ -11,7 +11,7 @@ import pufferlib
 
 try:
     import rerun as rr
-    from logging_utils import log_drone_pose
+    from .logging_utils import log_drone_pose
     HAS_RERUN = True
 except ImportError:
     HAS_RERUN = False
