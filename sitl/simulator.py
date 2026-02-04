@@ -117,21 +117,33 @@ class L2F(Simulator):
 
         # Build RC channels to send to Betaflight
         # Channels 0-6: joystick input
-        # Channels 7-15: state feedback (position, velocity, orientation)
-        x, y, z = position
+        # Channels 7-15: state feedback for NN policy
         vx, vy, vz = linear_velocity
         quat_xyzw = np.array([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
         orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
         rotvec = orientation_rot.as_rotvec()
 
+        # Compute body frame setpoint error: R^T * (target - position)
+        # Target is [0, 0, 1] (hover at 1m height)
+        target_position = np.array([0.0, 0.0, 1.0])
+        position_error_world = target_position - position
+        # Rotate to body frame using R^T (inverse rotation)
+        body_setpoint_error = orientation_rot.inv().apply(position_error_world)
+
+        # Compute body frame velocity: R^T * world_velocity
+        body_velocity = orientation_rot.inv().apply(linear_velocity)
+
         rescale = lambda v: max(988, min(2012, int((v + 1) * 512 + 988)))  # PWM: [-1, 1] -> [988, 2012], matches real hardware
         channels = [*self.joystick_values, *([0]*8)]
-        channels[7] = rescale(x)
-        channels[8] = rescale(y)
-        channels[9] = rescale(z)
-        channels[10] = rescale(vx)
-        channels[11] = rescale(vy)
-        channels[12] = rescale(vz)
+        # Channels 7-9: body frame setpoint error (direct NN input)
+        channels[7] = rescale(body_setpoint_error[0])
+        channels[8] = rescale(body_setpoint_error[1])
+        channels[9] = rescale(body_setpoint_error[2])
+        # Channels 10-12: body frame velocity (direct NN input)
+        channels[10] = rescale(body_velocity[0])
+        channels[11] = rescale(body_velocity[1])
+        channels[12] = rescale(body_velocity[2])
+        # Channels 13-15: rotation vector (for quaternion reconstruction)
         channels[13] = rescale(rotvec[0])
         channels[14] = rescale(rotvec[1])
         channels[15] = rescale(rotvec[2])
@@ -146,12 +158,12 @@ class L2F(Simulator):
         rr.log("rc/joystick/aux3", rr.Scalars(float(self.joystick_values[6])))
         rr.log("rc/joystick/aux4", rr.Scalars(float(self.joystick_values[7])))
 
-        rr.log("rc/state/position_x", rr.Scalars(float(channels[7])))
-        rr.log("rc/state/position_y", rr.Scalars(float(channels[8])))
-        rr.log("rc/state/position_z", rr.Scalars(float(channels[9])))
-        rr.log("rc/state/velocity_x", rr.Scalars(float(channels[10])))
-        rr.log("rc/state/velocity_y", rr.Scalars(float(channels[11])))
-        rr.log("rc/state/velocity_z", rr.Scalars(float(channels[12])))
+        rr.log("rc/state/body_setpoint_error_x", rr.Scalars(float(body_setpoint_error[0])))
+        rr.log("rc/state/body_setpoint_error_y", rr.Scalars(float(body_setpoint_error[1])))
+        rr.log("rc/state/body_setpoint_error_z", rr.Scalars(float(body_setpoint_error[2])))
+        rr.log("rc/state/body_velocity_x", rr.Scalars(float(body_velocity[0])))
+        rr.log("rc/state/body_velocity_y", rr.Scalars(float(body_velocity[1])))
+        rr.log("rc/state/body_velocity_z", rr.Scalars(float(body_velocity[2])))
         rr.log("rc/state/rotation_x", rr.Scalars(float(channels[13])))
         rr.log("rc/state/rotation_y", rr.Scalars(float(channels[14])))
         rr.log("rc/state/rotation_z", rr.Scalars(float(channels[15])))
