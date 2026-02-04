@@ -122,7 +122,7 @@ class L2F(Simulator):
         orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
         rotvec = orientation_rot.as_rotvec()
 
-        rescale = lambda v: max(0, min(2047, int((v + 1) * 1023.5)))  # 11-bit: [-1, 1] -> [0, 2047], clamped
+        rescale = lambda v: max(988, min(2012, int((v + 1) * 512 + 988)))  # PWM: [-1, 1] -> [988, 2012], matches real hardware
         channels = [*self.joystick_values, *([0]*8)]
         channels[7] = rescale(x)
         channels[8] = rescale(y)
