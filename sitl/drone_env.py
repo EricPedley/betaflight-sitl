@@ -149,6 +149,8 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         orientation_reward_scale: float = 10.0,
         dynamics_randomization_delta: float = 0.0,
         observation_delay_steps: int = 0,
+        force_perturbation_std: float = 0.0,
+        torque_perturbation_std: float = 0.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         render_mode: Optional[str] = None,
         use_compile: bool = False,
@@ -175,6 +177,8 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self.distance_to_goal_reward_scale = distance_to_goal_reward_scale
         self.orientation_reward_scale = orientation_reward_scale
         self.dynamics_randomization_delta = dynamics_randomization_delta
+        self.force_perturbation_std = force_perturbation_std
+        self.torque_perturbation_std = torque_perturbation_std
         self.render_mode = render_mode
         self.auto_reset = auto_reset
 
@@ -200,6 +204,10 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self._actions = torch.zeros(self.num_envs, 4, device=self.device)
         self._rotor_speeds = torch.zeros(self.num_envs, 4, device=self.device)
         self._total_thrust_body = torch.zeros(self.num_envs, 3, device=self.device)
+
+        # Perturbations (body frame)
+        self._force_perturbation = torch.zeros(self.num_envs, 3, device=self.device)
+        self._torque_perturbation = torch.zeros(self.num_envs, 3, device=self.device)
 
         # Goal position
         self._desired_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
@@ -322,6 +330,8 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         ang_vel_reward_scale: float,
         distance_to_goal_reward_scale: float,
         orientation_reward_scale: float,
+        force_perturbation: torch.Tensor,
+        torque_perturbation: torch.Tensor,
     ):
         """Pure computation kernel for physics step - compiled by torch.compile."""
         # Apply motor delay
@@ -349,10 +359,10 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         )
         # Roll and pitch moment (torque in x and y axis) - vectorized cross product
         cross_prod = torch.cross(rotor_positions, rotor_thrust, dim=-1).sum(dim=1)
-        torque_body = torque_body + cross_prod
+        torque_body = torque_body + cross_prod + torque_perturbation
 
-        # Total thrust in body frame
-        total_thrust_body = rotor_thrust.sum(dim=1)
+        # Total thrust in body frame (with force perturbation)
+        total_thrust_body = rotor_thrust.sum(dim=1) + force_perturbation
 
         # Integrate physics
         # Convert thrust from body to world frame
@@ -481,6 +491,8 @@ class QuadcopterEnv(pufferlib.PufferEnv):
             self.ang_vel_reward_scale,
             self.distance_to_goal_reward_scale,
             self.orientation_reward_scale,
+            self._force_perturbation,
+            self._torque_perturbation,
         )
 
         # Apply observation delay if configured
@@ -621,6 +633,16 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         self._rotor_speeds[env_ids] = 0.0
         self._cumulative_rewards[env_ids] = 0.0
 
+        # Sample perturbations for the episode from zero-mean Gaussian
+        if self.force_perturbation_std > 0:
+            self._force_perturbation[env_ids] = torch.randn(len(env_ids), 3, device=self.device) * self.force_perturbation_std
+        else:
+            self._force_perturbation[env_ids] = 0.0
+        if self.torque_perturbation_std > 0:
+            self._torque_perturbation[env_ids] = torch.randn(len(env_ids), 3, device=self.device) * self.torque_perturbation_std
+        else:
+            self._torque_perturbation[env_ids] = 0.0
+
         # Reset episode sums
         for key in self._episode_sums.keys():
             self._episode_sums[key][env_ids] = 0.0
@@ -714,6 +736,18 @@ class QuadcopterEnv(pufferlib.PufferEnv):
         rr.log("velocity_world_m_s/x", rr.Scalars(float(velocity_world[0])))
         rr.log("velocity_world_m_s/y", rr.Scalars(float(velocity_world[1])))
         rr.log("velocity_world_m_s/z", rr.Scalars(float(velocity_world[2])))
+
+        # Log force perturbation in body frame as time series
+        force_perturb = self._force_perturbation[0].detach().cpu().numpy()
+        rr.log("force_perturbation_N/x", rr.Scalars(float(force_perturb[0])))
+        rr.log("force_perturbation_N/y", rr.Scalars(float(force_perturb[1])))
+        rr.log("force_perturbation_N/z", rr.Scalars(float(force_perturb[2])))
+
+        # Log torque perturbation in body frame as time series
+        torque_perturb = self._torque_perturbation[0].detach().cpu().numpy()
+        rr.log("torque_perturbation_Nm/x", rr.Scalars(float(torque_perturb[0])))
+        rr.log("torque_perturbation_Nm/y", rr.Scalars(float(torque_perturb[1])))
+        rr.log("torque_perturbation_Nm/z", rr.Scalars(float(torque_perturb[2])))
 
         # Log goal position with goal orientation
         goal_position = self._desired_pos_w[0].detach().cpu().numpy()
