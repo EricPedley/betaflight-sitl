@@ -121,7 +121,13 @@ class L2F(Simulator):
         vx, vy, vz = linear_velocity
         quat_xyzw = np.array([quaternion[1], quaternion[2], quaternion[3], quaternion[0]])
         orientation_rot = R.from_quat(quat_xyzw, scalar_first=False)
-        rotvec = orientation_rot.as_rotvec()
+
+        # Use quaternion xyz components for transmission (qw can be recovered from unit constraint)
+        # Ensure canonical form where qw >= 0
+        quat_for_tx = quaternion.copy()  # (w, x, y, z) format
+        if quat_for_tx[0] < 0:
+            quat_for_tx = -quat_for_tx
+        quat_xyz = quat_for_tx[1:4]  # (x, y, z) - always in [-1, 1] for unit quaternions
 
         # Compute body frame setpoint error: R^T * (target - position)
         # Target is [0, 0, 1] (hover at 1m height)
@@ -143,10 +149,11 @@ class L2F(Simulator):
         channels[10] = rescale(body_velocity[0])
         channels[11] = rescale(body_velocity[1])
         channels[12] = rescale(body_velocity[2])
-        # Channels 13-15: rotation vector (for quaternion reconstruction)
-        channels[13] = rescale(rotvec[0])
-        channels[14] = rescale(rotvec[1])
-        channels[15] = rescale(rotvec[2])
+        # Channels 13-15: quaternion xyz components (qw recovered via unit constraint)
+        # quat_xyz is always in [-1, 1] for unit quaternions, no clamping needed
+        channels[13] = rescale(quat_xyz[0])
+        channels[14] = rescale(quat_xyz[1])
+        channels[15] = rescale(quat_xyz[2])
 
         # Log RC channels with semantic names
         rr.log("rc/joystick/roll", rr.Scalars(float(self.joystick_values[0])))
@@ -164,9 +171,9 @@ class L2F(Simulator):
         rr.log("rc/state/body_velocity_x", rr.Scalars(float(body_velocity[0])))
         rr.log("rc/state/body_velocity_y", rr.Scalars(float(body_velocity[1])))
         rr.log("rc/state/body_velocity_z", rr.Scalars(float(body_velocity[2])))
-        rr.log("rc/state/rotation_x", rr.Scalars(float(channels[13])))
-        rr.log("rc/state/rotation_y", rr.Scalars(float(channels[14])))
-        rr.log("rc/state/rotation_z", rr.Scalars(float(channels[15])))
+        rr.log("rc/state/quat_x", rr.Scalars(float(quat_xyz[0])))
+        rr.log("rc/state/quat_y", rr.Scalars(float(quat_xyz[1])))
+        rr.log("rc/state/quat_z", rr.Scalars(float(quat_xyz[2])))
 
         self.set_rc_channels(channels)
 
